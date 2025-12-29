@@ -1,0 +1,41 @@
+# Source files (we ship dist)
+src/
+tests/
+
+# Development config
+.vscode/
+.smyth/
+*.test.ts
+vitest.config.ts
+rollup.config.js
+tsconfig.json
+
+# Development files
+example.diff
+DEPLOYMENT.md
+.env
+*.log
+
+# Build artifacts
+*.tsbuildinfo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Scripts
+scripts/
+
+# Prettier
+.prettierrc
+.prettierignore
+
+# Editor
+*.swp
+*.swo
+*~
