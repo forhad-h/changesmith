@@ -1,9 +1,10 @@
 /**
- * Message command - Generate professional commit messages
+ * Message command - AI-powered commit message generation with learning and context
  */
 
 import { createAdapter, AdapterType } from '../adapters/index';
-import { SREClient, MessageWorkflow } from '../sre/index';
+import { MessageWorkflow } from '../sre/index';
+import chalk from 'chalk';
 
 export interface MessageCommandOptions {
   maxLen: number;
@@ -13,12 +14,18 @@ export interface MessageCommandOptions {
   adapter: AdapterType;
   input?: string;
   printPrompt?: boolean;
+  enableLearning?: boolean;
+  enableStreaming?: boolean;
 }
 
 export interface MessageCommandResult {
   message: string;
   warnings: string[];
   error?: string;
+  metadata?: {
+    toolsUsed?: string[];
+    usage?: any;
+  };
 }
 
 export async function messageCommand(options: MessageCommandOptions): Promise<MessageCommandResult> {
@@ -62,21 +69,28 @@ export async function messageCommand(options: MessageCommandOptions): Promise<Me
       scope = options.scope;
     }
 
-    // Initialize SRE client and workflow
-    const client = new SREClient();
-    const workflow = new MessageWorkflow(client);
+    // Show progress if streaming
+    if (options.enableStreaming !== false && options.printPrompt !== false) {
+      console.log(chalk.dim('Analyzing changes...'));
+    }
 
-    // Execute workflow
+    // Initialize workflow (now uses enhanced client by default)
+    const workflow = new MessageWorkflow();
+
+    // Execute workflow with all features
     const result = await workflow.execute(diff, {
       maxLen: options.maxLen,
       style: options.style,
       scope,
       printPrompt: options.printPrompt,
+      enableLearning: options.enableLearning,
+      enableStreaming: options.enableStreaming,
     });
 
     return {
       message: result.message,
       warnings: result.warnings,
+      metadata: result.metadata,
     };
   } catch (error) {
     return {

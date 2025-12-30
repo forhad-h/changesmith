@@ -1,9 +1,9 @@
 /**
- * Review command - Review code changes before PR
+ * Review command - Multi-agent code review with regression detection
  */
 
 import { createAdapter, AdapterType } from '../adapters/index';
-import { SREClient, ReviewWorkflow } from '../sre/index';
+import { ReviewWorkflow } from '../sre/index';
 
 export interface ReviewCommandOptions {
   format: 'text' | 'md' | 'json';
@@ -12,6 +12,9 @@ export interface ReviewCommandOptions {
   adapter: AdapterType;
   input?: string;
   printPrompt?: boolean;
+  useMultiAgent?: boolean;
+  checkRegressions?: boolean;
+  useVectorDB?: boolean;
 }
 
 export interface ReviewCommandResult {
@@ -49,16 +52,18 @@ export async function reviewCommand(options: ReviewCommandOptions): Promise<Revi
       };
     }
 
-    // Initialize SRE client and workflow
-    const client = new SREClient();
-    const workflow = new ReviewWorkflow(client);
+    // Initialize workflow (now uses enhanced client by default)
+    const workflow = new ReviewWorkflow();
 
-    // Execute workflow
+    // Execute workflow with all features
     const result = await workflow.execute(diff, {
       format: options.format,
       strict: options.strict,
       patch: options.patch,
       printPrompt: options.printPrompt,
+      useMultiAgent: options.useMultiAgent,
+      checkRegressions: options.checkRegressions,
+      useVectorDB: options.useVectorDB,
     });
 
     return {

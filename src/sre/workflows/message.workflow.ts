@@ -1,9 +1,11 @@
 /**
  * Message generation workflow
- * This module handles the LLM workflow for generating commit messages
+ * AI-powered commit message generation with learning, streaming, and context awareness
  */
 
-import { SREClient } from '../client';
+import { EnhancedSREClient } from '../enhanced-client';
+import { addGitSkills } from '../skills/git-skills';
+import { CommitMemorySystem } from '../memory/commit-memory';
 import { redactSecrets, truncateLargeDiff } from '../../utils/redact';
 import { validateConventionalCommit, validateLength, truncateSafely } from '../../utils/validate';
 
@@ -12,18 +14,32 @@ export interface MessageWorkflowOptions {
   style: 'plain' | 'conventional';
   scope?: string;
   printPrompt?: boolean;
+  enableLearning?: boolean;
+  enableStreaming?: boolean;
 }
 
 export interface MessageWorkflowResult {
   message: string;
   warnings: string[];
+  metadata?: {
+    toolsUsed?: string[];
+    usage?: any;
+  };
 }
 
 export class MessageWorkflow {
-  private client: SREClient;
+  private client: EnhancedSREClient;
+  private memory?: CommitMemorySystem;
 
-  constructor(client: SREClient) {
-    this.client = client;
+  constructor() {
+    // Always use enhanced client for full features
+    this.client = new EnhancedSREClient({
+      enablePlanner: false, // Don't need planner for message generation
+    });
+
+    // Add git context skills
+    const agent = this.client.getAgent();
+    addGitSkills(agent);
   }
 
   async execute(diff: string, options: MessageWorkflowOptions): Promise<MessageWorkflowResult> {
@@ -42,20 +58,59 @@ export class MessageWorkflow {
       warnings.push('Diff was truncated due to size (>80k chars)');
     }
 
-    // Generate message with retry logic for length
-    let message = await this.generateWithRetry(safeDiff, options, 2);
+    // Initialize memory system if learning is enabled
+    let goodExamples: string[] = [];
+    if (options.enableLearning !== false) {
+      this.memory = new CommitMemorySystem(this.client.getAgent());
+      goodExamples = this.memory.getGoodExamples(5, options.style);
+    }
+
+    // Generate message with streaming
+    let finalMessage = '';
+    const metadata: any = {};
+
+    if (options.enableStreaming !== false) {
+      // Use streaming for real-time feedback
+      for await (const event of this.client.generateCommitMessageStream(safeDiff, {
+        maxLen: options.maxLen,
+        style: options.style,
+        scope: options.scope,
+        goodExamples,
+      })) {
+        if (event.type === 'complete') {
+          finalMessage = event.data.content;
+          metadata.toolsUsed = event.data.metadata.toolsUsed;
+          metadata.usage = event.data.metadata.usage;
+        }
+      }
+    } else {
+      // Non-streaming fallback
+      const stream = this.client.generateCommitMessageStream(safeDiff, {
+        maxLen: options.maxLen,
+        style: options.style,
+        scope: options.scope,
+        goodExamples,
+      });
+
+      for await (const event of stream) {
+        if (event.type === 'complete') {
+          finalMessage = event.data.content;
+          metadata.toolsUsed = event.data.metadata.toolsUsed;
+          metadata.usage = event.data.metadata.usage;
+        }
+      }
+    }
 
     // Validate and enforce constraints
-    const lengthValidation = validateLength(message, options.maxLen);
+    const lengthValidation = validateLength(finalMessage, options.maxLen);
     if (!lengthValidation.valid) {
-      // Truncate safely if still too long after retries
-      message = truncateSafely(message, options.maxLen);
+      finalMessage = truncateSafely(finalMessage, options.maxLen);
       warnings.push(`Message was truncated to ${options.maxLen} characters`);
     }
 
     // Validate conventional commit format if applicable
     if (options.style === 'conventional') {
-      const validation = validateConventionalCommit(message);
+      const validation = validateConventionalCommit(finalMessage);
       if (!validation.valid) {
         warnings.push(...validation.errors);
       }
@@ -63,38 +118,60 @@ export class MessageWorkflow {
     }
 
     return {
-      message,
+      message: finalMessage,
       warnings,
+      metadata,
     };
   }
 
-  private async generateWithRetry(
-    diff: string,
-    options: MessageWorkflowOptions,
-    maxRetries: number
-  ): Promise<string> {
-    let message = await this.client.generateCommitMessage(diff, {
-      maxLen: options.maxLen,
-      style: options.style,
-      scope: options.scope,
-    });
-
-    // Check length and retry if needed
-    let retries = 0;
-    while (message.length > options.maxLen && retries < maxRetries) {
-      retries++;
-
-      // Ask model to shorten
-      const shortenPrompt = `Shorten this commit message to ${options.maxLen} characters or less while keeping it meaningful:
-
-${message}
-
-OUTPUT ONLY THE SHORTENED MESSAGE:`;
-
-      message = await this.client.prompt(shortenPrompt);
-      message = message.trim();
+  /**
+   * Learn from user feedback
+   */
+  async learnFromFeedback(message: string, accepted: boolean, feedback?: string): Promise<void> {
+    if (!this.memory) {
+      this.memory = new CommitMemorySystem(this.client.getAgent());
     }
 
-    return message;
+    // Parse message to extract type/scope
+    const match = message.match(/^(\w+)(?:\(([^)]+)\))?:/);
+    const type = match?.[1];
+    const scope = match?.[2];
+
+    await this.memory.learnFromCommit(message, accepted, {
+      style: match ? 'conventional' : 'plain',
+      type,
+      scope,
+      feedback,
+    });
+  }
+
+  /**
+   * Get memory statistics
+   */
+  getMemoryStats() {
+    if (!this.memory) {
+      this.memory = new CommitMemorySystem(this.client.getAgent());
+    }
+    return this.memory.getStats();
+  }
+
+  /**
+   * Get user preferences from memory
+   */
+  getPreferences() {
+    if (!this.memory) {
+      this.memory = new CommitMemorySystem(this.client.getAgent());
+    }
+    return this.memory.getPreferences();
+  }
+
+  /**
+   * Reset memory
+   */
+  resetMemory(): void {
+    if (!this.memory) {
+      this.memory = new CommitMemorySystem(this.client.getAgent());
+    }
+    this.memory.reset();
   }
 }

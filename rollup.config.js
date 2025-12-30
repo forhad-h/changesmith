@@ -42,6 +42,7 @@ const config = [
             format: 'es',
             sourcemap: true,
             banner: '#!/usr/bin/env node',
+            inlineDynamicImports: true, // Inline dynamic imports to avoid chunk splitting
         },
         external: isExternal,
         plugins: [
